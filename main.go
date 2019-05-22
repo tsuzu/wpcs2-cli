@@ -299,10 +299,10 @@ func submit(cid, pidx int, tcname string, reader io.Reader) (*SubmitResult, erro
 	return submitImpl(cid, prob.ID, prob.DataSets[target].ID, reader)
 }
 
-const usage = `wpcs2 get pid [small/medium/large]
-wpcs2 submit pid [small/medium/large]
-wpcs2 server # start server
-`
+const usage = `Set $WPCS2_ID, $WPCS2_PASS, $WPCS2_CID
+wpcs2 get pid(A-Z) [small/medium/large]
+wpcs2 submit pid(A-Z) [small/medium/large]
+wpcs2 server # start server`
 
 var cache sync.Map
 

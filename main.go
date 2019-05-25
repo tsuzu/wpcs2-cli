@@ -414,7 +414,10 @@ func main() {
 	os.Args = os.Args[2:]
 	switch strings.ToLower(command) {
 	case "get":
-		query := fmt.Sprintf("?cid=%s&pidx=%s&tcname=%s", url.QueryEscape(os.Getenv("WPCS2_CID")), url.QueryEscape(os.Args[0]), url.QueryEscape(os.Args[1]))
+		v := strings.ToLower(os.Args[0])
+		v = strconv.Itoa(int(v[0] - 'a'))
+
+		query := fmt.Sprintf("?cid=%s&pidx=%s&tcname=%s", url.QueryEscape(os.Getenv("WPCS2_CID")), url.QueryEscape(v), url.QueryEscape(os.Args[1]))
 
 		resp, err := http.DefaultClient.Get("http://localhost:14716/get" + query)
 

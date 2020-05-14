@@ -2,10 +2,12 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
@@ -22,17 +24,59 @@ import (
 )
 
 var (
-	client        http.Client
+	client        = &http.Client{}
 	id, pass, cid string
 )
+
+var (
+	endpoint = "https://wpcs2.herokuapp.com/"
+)
+
+type BasicAuthTransport struct {
+	Username string
+	Password string
+}
+
+func (bat BasicAuthTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req.Header.Set("Authorization", fmt.Sprintf("Basic %s",
+		base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s",
+			bat.Username, bat.Password)))))
+	return http.DefaultTransport.RoundTrip(req)
+}
+
+func (bat *BasicAuthTransport) Client() *http.Client {
+	return &http.Client{Transport: bat}
+}
 
 func init() {
 	id = os.Getenv("WPCS2_ID")
 	pass = os.Getenv("WPCS2_PASS")
+
+	if ep, ok := os.LookupEnv("WPCS2_ENDPOINT"); ok {
+		endpoint = ep
+	}
+
+	userName := os.Getenv("BASIC_USERNAME")
+	password := os.Getenv("BASIC_PASSWORD")
+
+	if userName != "" && password != "" {
+		client.Transport = &BasicAuthTransport{
+			Username: userName,
+			Password: password,
+		}
+	}
+
+	jar, err := cookiejar.New(nil)
+
+	if err != nil {
+		panic(err)
+	}
+
+	client.Jar = jar
 }
 
 func getLoginPage() (string, error) {
-	req, err := http.NewRequest("GET", "https://wpcs2.herokuapp.com/users/sign_in", nil)
+	req, err := http.NewRequest("GET", endpoint+"users/sign_in", nil)
 	if err != nil {
 		return "", err
 	}
@@ -42,7 +86,7 @@ func getLoginPage() (string, error) {
 	req.Header.Set("Upgrade-Insecure-Requests", "1")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.157 Safari/537.36")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3")
-	req.Header.Set("Referer", "https://wpcs2.herokuapp.com/")
+	req.Header.Set("Referer", endpoint)
 	req.Header.Set("Accept-Language", "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7")
 
 	resp, err := client.Do(req)
@@ -65,12 +109,12 @@ func getLoginPage() (string, error) {
 }
 
 func getProblemPage(cid, pid int) (string, error) {
-	req, err := http.NewRequest("GET", "https://wpcs2.herokuapp.com/contests/"+strconv.Itoa(cid)+"/problems/"+strconv.Itoa(pid), nil)
+	req, err := http.NewRequest("GET", endpoint+"contests/"+strconv.Itoa(cid)+"/problems/"+strconv.Itoa(pid), nil)
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.157 Safari/537.36")
-	req.Header.Set("Referer", "https://wpcs2.herokuapp.com/")
+	req.Header.Set("Referer", endpoint)
 	req.Header.Set("Accept-Language", "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7")
 
 	resp, err := client.Do(req)
@@ -105,19 +149,19 @@ func login(email, password string) error {
 	password = url.QueryEscape(password)
 
 	body := strings.NewReader(`utf8=%E2%9C%93&authenticity_token=` + token + `&user%5Bemail%5D=` + email + `&user%5Bpassword%5D=` + password + `&user%5Bremember_me%5D=0&commit=%E3%83%AD%E3%82%B0%E3%82%A4%E3%83%B3`)
-	req, err := http.NewRequest("POST", "https://wpcs2.herokuapp.com/users/sign_in", body)
+	req, err := http.NewRequest("POST", endpoint+"users/sign_in", body)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Connection", "keep-alive")
 	req.Header.Set("Pragma", "no-cache")
 	req.Header.Set("Cache-Control", "no-cache")
-	req.Header.Set("Origin", "https://wpcs2.herokuapp.com")
+	req.Header.Set("Origin", endpoint[:len(endpoint)-1])
 	req.Header.Set("Upgrade-Insecure-Requests", "1")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.157 Safari/537.36")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3")
-	req.Header.Set("Referer", "https://wpcs2.herokuapp.com/users/sign_in")
+	req.Header.Set("Referer", endpoint+"users/sign_in")
 	req.Header.Set("Accept-Encoding", "gzip, deflate, br")
 	req.Header.Set("Accept-Language", "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7")
 
@@ -126,6 +170,12 @@ func login(email, password string) error {
 		return err
 	}
 	defer resp.Body.Close()
+
+	b, _ := ioutil.ReadAll(resp.Body)
+
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("failed to login(%s): %s", resp.Status, string(b))
+	}
 
 	return nil
 }
@@ -165,7 +215,7 @@ type Contest struct {
 func getContest(cidRaw int) (*Contest, error) {
 	cid := strconv.Itoa(cidRaw)
 
-	req, err := http.NewRequest("GET", "https://wpcs2.herokuapp.com/api/contests/"+cid, nil)
+	req, err := http.NewRequest("GET", endpoint+"api/contests/"+cid, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +224,7 @@ func getContest(cidRaw int) (*Contest, error) {
 	req.Header.Set("Accept-Language", "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.157 Safari/537.36")
 	req.Header.Set("Accept", "*/*")
-	req.Header.Set("Referer", "https://wpcs2.herokuapp.com/contests/"+cid)
+	req.Header.Set("Referer", endpoint+"contests/"+cid)
 	req.Header.Set("Connection", "keep-alive")
 	req.Header.Set("Cache-Control", "no-cache")
 
@@ -196,7 +246,7 @@ func getContest(cidRaw int) (*Contest, error) {
 func getTestCase(cid, pid, tid int) (io.ReadCloser, error) {
 	// https://wpcs2.herokuapp.com/contests/7/problems/37/data_sets/56
 
-	req, err := http.NewRequest("GET", "https://wpcs2.herokuapp.com/contests/"+strconv.Itoa(cid)+"/problems/"+strconv.Itoa(pid)+"/data_sets/"+strconv.Itoa(tid), nil)
+	req, err := http.NewRequest("GET", endpoint+"contests/"+strconv.Itoa(cid)+"/problems/"+strconv.Itoa(pid)+"/data_sets/"+strconv.Itoa(tid), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +254,7 @@ func getTestCase(cid, pid, tid int) (io.ReadCloser, error) {
 	req.Header.Set("Accept-Language", "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.157 Safari/537.36")
 	req.Header.Set("Accept", "*/*")
-	req.Header.Set("Referer", "https://wpcs2.herokuapp.com/contests/"+strconv.Itoa(cid)+"/problems/"+strconv.Itoa(pid))
+	req.Header.Set("Referer", endpoint+"contests/"+strconv.Itoa(cid)+"/problems/"+strconv.Itoa(pid))
 	req.Header.Set("Connection", "keep-alive")
 	req.Header.Set("Cache-Control", "no-cache")
 
@@ -248,20 +298,19 @@ func submitImpl(cid, pid, tid int, reader io.Reader) (*SubmitResult, error) {
 	io.Copy(field, reader)
 	writer.Close()
 
-	req, err := http.NewRequest("POST", "https://wpcs2.herokuapp.com/api/contests/"+strconv.Itoa(cid)+"/submissions", buf)
+	req, err := http.NewRequest("POST", endpoint+"api/contests/"+strconv.Itoa(cid)+"/submissions", buf)
 	if err != nil {
 		return nil, err
 	}
 
 	req.Header.Set("Pragma", "no-cache")
-	req.Header.Set("Origin", "https://wpcs2.herokuapp.com")
+	req.Header.Set("Origin", endpoint[:len(endpoint)-1])
 	req.Header.Set("Accept-Language", "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.157 Safari/537.36")
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("Content-Length", strconv.Itoa(buf.Len()))
-	req.Header.Set("Referer", "https://wpcs2.herokuapp.com/contests/"+strconv.Itoa(cid)+"/problems/"+strconv.Itoa(pid))
+	req.Header.Set("Referer", endpoint+"contests/"+strconv.Itoa(cid)+"/problems/"+strconv.Itoa(pid))
 	req.Header.Set("Accept-Encoding", "gzip, deflate, br")
-	req.Header.Set("Origin", "https://wpcs2.herokuapp.com")
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -269,6 +318,12 @@ func submitImpl(cid, pid, tid int, reader io.Reader) (*SubmitResult, error) {
 	}
 
 	defer resp.Body.Close()
+
+	if resp.StatusCode/100 != 2 {
+		b, _ := ioutil.ReadAll(resp.Body)
+
+		return nil, fmt.Errorf("failed to submit(%s): %s", resp.Status, string(b))
+	}
 
 	var res SubmitResult
 
@@ -400,16 +455,6 @@ func main() {
 		return
 	}
 
-	client = http.Client{}
-
-	jar, err := cookiejar.New(nil)
-
-	if err != nil {
-		panic(err)
-	}
-
-	client.Jar = jar
-
 	command := os.Args[1]
 	os.Args = os.Args[2:]
 	switch strings.ToLower(command) {
@@ -444,6 +489,12 @@ func main() {
 
 		if err != nil {
 			panic(err)
+		}
+
+		if resp.StatusCode/100 != 2 {
+			b, _ := ioutil.ReadAll(resp.Body)
+
+			log.Println(string(b))
 		}
 
 		var res SubmitResult
